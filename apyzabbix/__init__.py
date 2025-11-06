@@ -1,7 +1,7 @@
 from .api import (
-    ZabbixAPI,
-    ZabbixAPIException,
-    ZabbixAPIMethod,
-    ZabbixAPIObject,
-    ZabbixAPIObjectClass,
+    AsyncZabbixAPI,
+    AsyncZabbixAPIException,
+    AsyncZabbixAPIMethod,
+    AsyncZabbixAPIObject,
+    AsyncZabbixAPIObjectClass,
 )

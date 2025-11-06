@@ -9,11 +9,11 @@ from packaging.version import Version
 import httpx
 
 __all__ = [
-    "ZabbixAPI",
-    "ZabbixAPIException",
-    "ZabbixAPIMethod",
-    "ZabbixAPIObject",
-    "ZabbixAPIObjectClass",
+    "AsyncZabbixAPI",
+    "AsyncZabbixAPIException",
+    "AsyncZabbixAPIMethod",
+    "AsyncZabbixAPIObject",
+    "AsyncZabbixAPIObjectClass",
 ]
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ ZABBIX_5_4_0 = Version("5.4.0")
 ZABBIX_6_4_0 = Version("6.4.0")
 
 
-class ZabbixAPIException(Exception):
+class AsyncZabbixAPIException(Exception):
     """Generic Zabbix API exception
 
     Codes:
@@ -45,7 +45,7 @@ class ZabbixAPIException(Exception):
 
 
 # pylint: disable=too-many-instance-attributes
-class ZabbixAPI:
+class AsyncZabbixAPI:
     # pylint: disable=too-many-arguments, too-many-positional-arguments
     def __init__(
         self,
@@ -92,12 +92,12 @@ class ZabbixAPI:
         self.version: Optional[Version] = None
         self._detect_version = detect_version
 
-    async def __aenter__(self) -> "ZabbixAPI":
+    async def __aenter__(self) -> "AsyncZabbixAPI":
         return self
 
     async def __aexit__(self, exception_type, exception_value, traceback):
         try:
-            if isinstance(exception_value, (ZabbixAPIException, type(None))):
+            if isinstance(exception_value, (AsyncZabbixAPIException, type(None))):
                 if await self.is_authenticated() and not self.use_api_token:
                     # Logout the user if they are authenticated using username + password.
                     await self.user.logout()
@@ -159,7 +159,7 @@ class ZabbixAPI:
 
         try:
             await self.user.checkAuthentication(sessionid=self.auth)
-        except ZabbixAPIException:
+        except AsyncZabbixAPIException:
             return False
         return True
 
@@ -176,8 +176,8 @@ class ZabbixAPI:
         :param confformat:
         """
         warn(
-            "ZabbixAPI.confimport(format, source, rules) has been deprecated, please use "
-            "ZabbixAPI.configuration['import'](format=format, source=source, rules=rules) instead",
+            "AsyncZabbixAPI.confimport(format, source, rules) has been deprecated, please use "
+            "AsyncZabbixAPI.configuration['import'](format=format, source=source, rules=rules) instead",
             DeprecationWarning,
             2,
         )
@@ -231,12 +231,12 @@ class ZabbixAPI:
         resp.raise_for_status()
 
         if not resp.text:
-            raise ZabbixAPIException("Received empty response")
+            raise AsyncZabbixAPIException("Received empty response")
 
         try:
             response = resp.json()
         except ValueError as exception:
-            raise ZabbixAPIException(
+            raise AsyncZabbixAPIException(
                 f"Unable to parse json: {resp.text}"
             ) from exception
 
@@ -251,7 +251,7 @@ class ZabbixAPI:
             if "data" not in error:
                 error["data"] = "No data"
 
-            raise ZabbixAPIException(
+            raise AsyncZabbixAPIException(
                 f"Error {error['code']}: {error['message']}, {error['data']}",
                 error["code"],
                 error=error,
@@ -259,20 +259,20 @@ class ZabbixAPI:
 
         return response
 
-    def _object(self, attr: str) -> "ZabbixAPIObject":
+    def _object(self, attr: str) -> "AsyncZabbixAPIObject":
         """Dynamically create an object class (ie: host)"""
-        return ZabbixAPIObject(attr, self)
+        return AsyncZabbixAPIObject(attr, self)
 
-    def __getattr__(self, attr: str) -> "ZabbixAPIObject":
+    def __getattr__(self, attr: str) -> "AsyncZabbixAPIObject":
         return self._object(attr)
 
-    def __getitem__(self, attr: str) -> "ZabbixAPIObject":
+    def __getitem__(self, attr: str) -> "AsyncZabbixAPIObject":
         return self._object(attr)
 
 
 # pylint: disable=too-few-public-methods
-class ZabbixAPIMethod:
-    def __init__(self, method: str, parent: ZabbixAPI):
+class AsyncZabbixAPIMethod:
+    def __init__(self, method: str, parent: AsyncZabbixAPI):
         self._method = method
         self._parent = parent
 
@@ -285,26 +285,26 @@ class ZabbixAPIMethod:
 
 
 # pylint: disable=too-few-public-methods
-class ZabbixAPIObject:
-    def __init__(self, name: str, parent: ZabbixAPI):
+class AsyncZabbixAPIObject:
+    def __init__(self, name: str, parent: AsyncZabbixAPI):
         self._name = name
         self._parent = parent
 
-    def _method(self, attr: str) -> ZabbixAPIMethod:
+    def _method(self, attr: str) -> AsyncZabbixAPIMethod:
         """Dynamically create a method (ie: get)"""
-        return ZabbixAPIMethod(f"{self._name}.{attr}", self._parent)
+        return AsyncZabbixAPIMethod(f"{self._name}.{attr}", self._parent)
 
-    def __getattr__(self, attr: str) -> ZabbixAPIMethod:
+    def __getattr__(self, attr: str) -> AsyncZabbixAPIMethod:
         return self._method(attr)
 
-    def __getitem__(self, attr: str) -> ZabbixAPIMethod:
+    def __getitem__(self, attr: str) -> AsyncZabbixAPIMethod:
         return self._method(attr)
 
 
-class ZabbixAPIObjectClass(ZabbixAPIObject):
+class AsyncZabbixAPIObjectClass(AsyncZabbixAPIObject):
     def __init__(self, *args, **kwargs):
         warn(
-            "ZabbixAPIObjectClass has been renamed to ZabbixAPIObject",
+            "AsyncZabbixAPIObjectClass has been renamed to AsyncZabbixAPIObject",
             DeprecationWarning,
             2,
         )
