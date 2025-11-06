@@ -6,7 +6,7 @@ from typing import Optional, Union
 from warnings import warn
 
 from packaging.version import Version
-from requests import Session
+import httpx
 
 __all__ = [
     "ZabbixAPI",
@@ -50,25 +50,26 @@ class ZabbixAPI:
     def __init__(
         self,
         server: str = "http://localhost/zabbix",
-        session: Optional[Session] = None,
+        client: Optional[httpx.AsyncClient] = None,
         use_authenticate: bool = False,
         timeout: Optional[Union[float, int, tuple[int, int]]] = None,
         detect_version: bool = True,
     ):
         """
         :param server: Base URI for zabbix web interface (omitting /api_jsonrpc.php)
-        :param session: optional pre-configured requests.Session instance
+        :param client: optional pre-configured httpx.AsyncClient instance
         :param use_authenticate: Use old (Zabbix 1.8) style authentication
         :param timeout: optional connect and read timeout in seconds, default: None
-                        If you're using Requests >= 2.4 you can set it as
+                        If you're using httpx you can set it as
                         tuple: "(connect, read)" which is used to set individual
                         connect and read timeouts.
         :param detect_version: autodetect Zabbix API version
         """
-        self.session = session or Session()
+        self._client_provided = client is not None
+        self.client = client or httpx.AsyncClient()
 
         # Default headers for all requests
-        self.session.headers.update(
+        self.client.headers.update(
             {
                 "Content-Type": "application/json-rpc",
                 "User-Agent": "python/pyzabbix",
@@ -91,19 +92,23 @@ class ZabbixAPI:
         self.version: Optional[Version] = None
         self._detect_version = detect_version
 
-    def __enter__(self) -> "ZabbixAPI":
+    async def __aenter__(self) -> "ZabbixAPI":
         return self
 
-    # pylint: disable=inconsistent-return-statements
-    def __exit__(self, exception_type, exception_value, traceback):
-        if isinstance(exception_value, (ZabbixAPIException, type(None))):
-            if self.is_authenticated and not self.use_api_token:
-                # Logout the user if they are authenticated using username + password.
-                self.user.logout()
-            return True
+    async def __aexit__(self, exception_type, exception_value, traceback):
+        try:
+            if isinstance(exception_value, (ZabbixAPIException, type(None))):
+                if await self.is_authenticated() and not self.use_api_token:
+                    # Logout the user if they are authenticated using username + password.
+                    await self.user.logout()
+                return True
+        finally:
+            # Close the client if we created it
+            if not self._client_provided:
+                await self.client.aclose()
         return None
 
-    def login(
+    async def login(
         self,
         user: str = "",
         password: str = "",
@@ -121,7 +126,7 @@ class ZabbixAPI:
         """
 
         if self._detect_version:
-            self.version = Version(self.api_version())
+            self.version = Version(await self.api_version())
             logger.info("Zabbix API version is: %s", self.version)
 
         # If the API token is explicitly provided, use this instead.
@@ -134,32 +139,31 @@ class ZabbixAPI:
         # request. Clear it before trying.
         self.auth = ""
         if self.use_authenticate:
-            self.auth = self.user.authenticate(user=user, password=password)
+            self.auth = await self.user.authenticate(user=user, password=password)
         elif self.version and self.version >= ZABBIX_5_4_0:
-            self.auth = self.user.login(username=user, password=password)
+            self.auth = await self.user.login(username=user, password=password)
         else:
-            self.auth = self.user.login(user=user, password=password)
+            self.auth = await self.user.login(user=user, password=password)
 
-    def check_authentication(self):
+    async def check_authentication(self):
         if self.use_api_token:
             # We cannot use this call using an API Token
             return True
         # Convenience method for calling user.checkAuthentication of the current session
-        return self.user.checkAuthentication(sessionid=self.auth)
+        return await self.user.checkAuthentication(sessionid=self.auth)
 
-    @property
-    def is_authenticated(self) -> bool:
+    async def is_authenticated(self) -> bool:
         if self.use_api_token:
             # We cannot use this call using an API Token
             return True
 
         try:
-            self.user.checkAuthentication(sessionid=self.auth)
+            await self.user.checkAuthentication(sessionid=self.auth)
         except ZabbixAPIException:
             return False
         return True
 
-    def confimport(
+    async def confimport(
         self,
         confformat: str = "",
         source: str = "",
@@ -178,16 +182,16 @@ class ZabbixAPI:
             2,
         )
 
-        return self.configuration["import"](
+        return await self.configuration["import"](
             format=confformat,
             source=source,
             rules=rules,
         )
 
-    def api_version(self) -> str:
-        return self.apiinfo.version()
+    async def api_version(self) -> str:
+        return await self.apiinfo.version()
 
-    def do_request(
+    async def do_request(
         self,
         method: str,
         params: Optional[Union[Mapping, Sequence]] = None,
@@ -214,7 +218,7 @@ class ZabbixAPI:
                 payload["auth"] = self.auth
 
         logger.debug("Sending: %s", payload)
-        resp = self.session.post(
+        resp = await self.client.post(
             self.url,
             json=payload,
             headers=headers,
@@ -272,11 +276,12 @@ class ZabbixAPIMethod:
         self._method = method
         self._parent = parent
 
-    def __call__(self, *args, **kwargs):
+    async def __call__(self, *args, **kwargs):
         if args and kwargs:
             raise TypeError("Found both args and kwargs")
 
-        return self._parent.do_request(self._method, args or kwargs)["result"]
+        result = await self._parent.do_request(self._method, args or kwargs)
+        return result["result"]
 
 
 # pylint: disable=too-few-public-methods
